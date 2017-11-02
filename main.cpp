@@ -14,19 +14,62 @@
 #define NUM_OF_METHOD 6
 #define METHOD_MAX_LENGTH 7
 #define IPP_TCP 6
+#define SIZE_OF_HOST_LIST 1000000
 
-char blockhost[30];
 char http_method[NUM_OF_METHOD][METHOD_MAX_LENGTH+1] = 
 				{"GET","POST","HEAD","PUT","DELETE","OPTIONS"};
 int http_method_size[NUM_OF_METHOD] = {3,4,4,3,6,7};
+char blockhost[]="test.gilgil.net";
 
+struct host_hash{
+	char domain[100];
+	int hash;
+}blockhost_list[SIZE_OF_HOST_LIST];
 
 void usage()
 {
-	printf("[*]iptables -F\n");
-	printf("[*]iptables -A OUTPUT -j NFQUEUE --queue-num 0\n");
-	printf("[*]iptables -A INPUT -j NFQUEUE --queue-num 0\n");
-	printf("[*]usage : ./netfilter_block www.domain.com\n");
+	puts("------------------------------");
+	printf("[*]iptables setting\n");
+	printf("[+]iptables -F\n");
+	system("iptables -F");
+	printf("[+]iptables -A OUTPUT -j NFQUEUE --queue-num 0\n");
+	system("iptables -A OUTPUT -j NFQUEUE --queue-num 0");
+	printf("[+]iptables -A INPUT -j NFQUEUE --queue-num 0\n");
+	system("iptables -A INPUT -j NFQUEUE --queue-num 0");
+	puts("------------------------------");
+}
+
+void database()
+{
+	puts("[*]Make database");
+	puts("[+]Open file top-1m-hashed-sorted.txt");
+	FILE *db = fopen("top-1m-hashed-sorted.txt","r");
+	puts("[*]Parsing database");
+
+	char domain[100],hash[100];
+	for(int i=0;i<1000000;i++)
+	{
+		fscanf(db,"%s %s",domain,hash);
+		strcpy(blockhost_list[i].domain,domain);
+		blockhost_list[i].hash = atoi(hash);
+	}
+	//for(int i=510000;i<510010;i++)printf("%s %d\n",blockhost_list[i].domain,blockhost_list[i].hash);
+	puts("[+]Successfully Parsed Database");
+	puts("------------------------------");
+}
+
+unsigned int RSHash(char*str,int length)
+{
+	unsigned int b = 378551;
+	unsigned int a = 63689;
+	unsigned int hash = 0;
+	for(int i=0;i<length;i++)
+	{
+		hash = hash * a + str[i];
+		a = a * b;
+	}
+	  
+	return (hash & 0x7FFFFFFF);
 }
 
 void dump(char*buf, int len)
@@ -35,6 +78,19 @@ void dump(char*buf, int len)
 	{
 		printf("%c",*buf++);
 	}
+}
+
+int find(int n,int low,int high)
+{
+	int mid = (low+high)/2;
+	while(low<=high)
+	{
+		mid = (low+high)/2;
+		if(blockhost_list[mid].hash == n)return mid+1;
+		if(blockhost_list[mid].hash < n) low = mid+1;
+		else high = mid -1;
+	}
+	return 0;
 }
 
 static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
@@ -57,21 +113,38 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 	if(ip_hdr->ip_p == IPP_TCP && ret >= SIZE_OF_IPV4 + SIZE_OF_TCP )
 	{
 		tcp_hdr = (struct libnet_tcp_hdr*)((char*)ip_hdr + SIZE_OF_IPV4);
-		char *payload = (char*)((char*)tcp_hdr+SIZE_OF_TCP);
-		u_int32_t len = ret - SIZE_OF_IPV4 - SIZE_OF_TCP;
+		int tcp_size = tcp_hdr->th_off * 4;
+		char *payload = (char*)((char*)tcp_hdr+tcp_size);
+		u_int32_t len = ret - SIZE_OF_IPV4 - tcp_size;
 		
 		for(int i=0;i<NUM_OF_METHOD;i++)
 		{
 			if(!memcmp(payload, http_method[i],http_method_size[i]))
 			{
-				char *host;
 				char * tmp = strstr(payload, "Host: ");
 				if(!tmp)break;	
-				tmp+=6;
-				host = strtok(tmp, "\r");
-				if(strncmp(blockhost, host, strlen(blockhost)))break;
+				char *cmp = tmp+6;
+				int size_www = 0;
+				while(*(cmp-1)!='.')
+				{
+					cmp = cmp+1;
+					size_www ++ ;
+				}
+				char *hashcheck = cmp;
+				int size = 0;
+				while(*cmp!='\r')
+				{
+					cmp = cmp+1;
+					size++;
+				}
+				int tmphash = RSHash(hashcheck, size);
+
+				int index=find(tmphash,0,SIZE_OF_HOST_LIST-1);
+				if(!index)break;
 				
-				printf("[+]Blocking...%s\n",blockhost);
+				char blockedhost[30];
+				strncpy(blockedhost,tmp+6,size+size_www);
+				printf("[+]Blocking...%s\n",blockhost_list[index-1].domain);
 				//dump(payload,len);
 				return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
 			}
@@ -83,12 +156,8 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 
 int main(int argc, char *argv[])
 {
-	if(argc!=2)
-	{
-		usage();
-		exit(1);
-	}
-	strcpy(blockhost, argv[1]);
+	usage();
+	database();
 
 	struct nfq_handle *handle;
 	struct nfq_q_handle *q_handle;
@@ -128,6 +197,7 @@ int main(int argc, char *argv[])
 	}
 
 	printf("[*]Setting copy_packet mode\n");
+	puts("------------------------------");
 	if(nfq_set_mode(q_handle, NFQNL_COPY_PACKET, 0xffff) < 0)
 	{
 		printf("[-]Can't set packet_copy mod\n");
@@ -159,6 +229,9 @@ int main(int argc, char *argv[])
 
 	printf("[*]Closing library handle\n");
 	nfq_close(handle);
+
+	printf("[*]Reset iptable\n");
+	system("iptables -F");
 
 	return 0;
 }
