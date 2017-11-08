@@ -19,7 +19,6 @@
 char http_method[NUM_OF_METHOD][METHOD_MAX_LENGTH+1] = 
 				{"GET","POST","HEAD","PUT","DELETE","OPTIONS"};
 int http_method_size[NUM_OF_METHOD] = {3,4,4,3,6,7};
-char blockhost[]="test.gilgil.net";
 
 struct host_hash{
 	char domain[100];
@@ -53,7 +52,6 @@ void database()
 		strcpy(blockhost_list[i].domain,domain);
 		blockhost_list[i].hash = atoi(hash);
 	}
-	//for(int i=510000;i<510010;i++)printf("%s %d\n",blockhost_list[i].domain,blockhost_list[i].hash);
 	puts("[+]Successfully Parsed Database");
 	puts("------------------------------");
 }
@@ -82,11 +80,12 @@ void dump(char*buf, int len)
 
 int find(int n,int low,int high)
 {
+	// Update to Hash Search
 	int mid = (low+high)/2;
 	while(low<=high)
 	{
 		mid = (low+high)/2;
-		if(blockhost_list[mid].hash == n)return mid+1;
+		if(blockhost_list[mid].hash == n)return mid;
 		if(blockhost_list[mid].hash < n) low = mid+1;
 		else high = mid -1;
 	}
@@ -121,7 +120,7 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 		{
 			if(!memcmp(payload, http_method[i],http_method_size[i]))
 			{
-				char * tmp = strstr(payload, "Host: ");
+				char * tmp = strstr(payload, "Host: "); // replace strstr
 				if(!tmp)break;	
 				char *cmp = tmp+6;
 				int size_www = 0;
@@ -141,10 +140,8 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 
 				int index=find(tmphash,0,SIZE_OF_HOST_LIST-1);
 				if(!index)break;
-				
-				char blockedhost[30];
-				strncpy(blockedhost,tmp+6,size+size_www);
-				printf("[+]Blocking...%s\n",blockhost_list[index-1].domain);
+				if(strncmp(hashcheck, blockhost_list[index].domain,size))break;
+				printf("[+]Blocking...%s\n",blockhost_list[index].domain);
 				//dump(payload,len);
 				return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
 			}
