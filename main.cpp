@@ -52,6 +52,7 @@ void database()
 		strcpy(blockhost_list[i].domain,domain);
 		blockhost_list[i].hash = atoi(hash);
 	}
+	fclose(db);
 	puts("[+]Successfully Parsed Database");
 	puts("------------------------------");
 }
