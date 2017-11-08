@@ -1,0 +1,2 @@
+replace strstr
+change search algorithm to hash table
